@@ -1,0 +1,416 @@
+---
+title: 'LOAN APPROVAL USING PREDICTIVE ANALYTICS '
+output:
+  pdf_document: default
+  html_notebook: default
+---
+To minimize loss from the bank’s perspective, the bank needs a decision rule regarding who to give
+approval of the loan and who not to. An applicant’s demographic and socio-economic profiles are
+considered by loan managers before a decision is taken regarding his/her loan application.
+The Bank.data contains data on 9 input variables and the classification target indicating whether
+an applicant is considered a **Good or a Bad credit risk** for 1000 loan applicants. A predictive model
+developed on this data is expected to provide a bank manager guidance for making a decision whether
+to approve a loan to a prospective applicant based on his/her profiles.
+
+The variables in this dataset are:
+• Age (numeric)
+
+• Sex (categorical: male, female)
+
+• Job (categorical: 0 - unskilled and non-resident, 1 - unskilled and resident, 2 - skilled, 3 - highly skilled)
+
+• Housing (categorical: own, rent, or free)
+
+• Saving accounts (categorical: little, moderate, quite rich, rich)
+
+• Checking account (categorical: little, moderate, rich)
+
+• Credit amount (numeric, in USD)
+
+• Duration (numeric, in month)
+
+• Purpose (categorical: car, furniture/equipment, radio/TV, domestic appliances, repairs, education, business, vacation/others)
+
+• Target (categorical: 1 - Good, 0 - Bad)
+```{r}
+data <- read.csv("~/Downloads/Bank.data.csv")
+head(data)
+```
+
+```{r}
+#formatting data
+data$Sex <- as.factor(data$Sex)
+data$Job <- as.factor(data$Job)
+data$Housing <- as.factor(data$Housing)
+data$Saving.accounts <- as.factor(data$Saving.accounts)
+data$Checking.account <- as.factor(data$Checking.account)
+data$Purpose <- as.factor(data$Purpose)
+data$Target <- as.factor(data$Target)
+
+data$Age <- as.numeric(data$Age)
+data$Credit.amount <- as.numeric(data$Credit.amount)
+data$Duration <- as.numeric(data$Duration)
+```
+
+```{r}
+summary(data)
+```
+
+```{r}
+#5 number summary for the credit amount  (minimum, 1st quartile, median, 3rd quartile, maximum)
+summary(data$Credit.amount)
+```
+
+```{r}
+#correlation of Duration and Credit
+cor(data$Duration, data$Credit.amount)
+plot(data$Duration, data$Credit.amount)
+```
+Variables are NOT highly correlated so we can keep both variables for the analysis
+(Usually, high correlation is considered above 0.75)
+```{r}
+# Distribution of Credit amount for applicants considered as “Good” and “Bad” credit risk.
+
+boxplot(data$Credit.amount  ~  data$Target, main ="Distribution of Credit amount", xlab = "0 - Bad                                              1 - Good", ylab = "Credit Amount", title = "xccc" , col = "lightblue")
+
+```
+
+```{r}
+# table that contains the frequency of different housing types (free, own, rent) for “Good” and “Bad” instances.
+table(data$Housing, data$Target, useNA = "ifany", dnn= c("Housing", "Credit"))
+```
+```{r}
+#Renaming some variables
+names(data)[names(data) == "Checking.account"] <- "Checkings" 
+names(data)[names(data) == "Saving.accounts"] <- "Savings" 
+names(data)[names(data) == "Credit.amount"] <- "Credit"
+```
+
+### HANDLING MISSING VALUES
+```{r}
+#Handling missing values
+library(mice)
+md.pattern(data)
+```
+The output tells us that 522 samples are complete, 295 samples miss ONLY Checking.account, 84 samples miss only the saving.accounts and 99 samples miss both Saving.accounts and Checking.account.
+
+```{r}
+#As far as categorical variables are concerned, replacing categorical variables is usually not advisable. Some common practice include replacing missing categorical variables with the mode of the observed ones, however, it is questionable whether it is a good choice.
+```
+
+```{r}
+#Since all NA values are from categorical variables: 
+
+#REMOVE ALL ROWS  WITH NA VALUES
+Data <- na.omit(data)
+sum(is.na(Data))
+```
+### HANDLING OUTLIERS
+```{r}
+library(dplyr)
+boxplot(Data)
+#credit variable
+credit_outliers = boxplot.stats(Data$Credit)$out # We first save all the outliers in the vector
+credit_outliers
+
+#duration variable
+Duration_outliers = boxplot.stats(Data$Duration)$out # We first save all the outliers in the vector
+Duration_outliers
+
+#REMOVING OUTLIERS FROM DATA
+Data<- Data[-which(Data$Duration %in% Duration_outliers),]
+Data<- Data[-which(Data$Credit %in% credit_outliers),]
+boxplot(Data)
+
+```
+### Train/Test split
+```{r}
+set.seed(123)
+indx  <- sample(2,nrow(Data), replace=TRUE, prob = c(0.7, 0.3))
+train <- Data[indx==1, ]  
+test  <- Data[indx==2, ]  
+```
+
+### Logistic Regression Model using Forward Selection Technique
+
+Forward Selection considers one variable at a time:
+  
+  -If the variable improves the model (reduces AIC), we include it 
+  
+  -Otherwise, we don't include it.
+
+We look at r-squared, f-test or AIC. 
+
+We will check all possibilities from the null case to the full case
+```{r}
+#Extreme Cases
+full <- glm(Target ~ . , data=Data, family = "binomial")
+null <- glm(Target ~ 1 , data=Data, family = "binomial")
+step(null, scope = list(lower=null, upper=full), direction="forward")
+```
+
+AIC = −2log(Likelihood) + 2K
+
+AIC = Residual deviance + 2 × number of parameters.
+
+AIC is a single number score that can be used to determine which of multiple models is most likely to be the best model for a given dataset.
+
+A lower AIC score is better.
+
+"The Akaike information criterion (AIC) is an estimator of out-of-sample prediction error and thereby relative quality of statistical models for a given set of data. Given a collection of models for the data, AIC estimates the quality of each model, relative to each of the other models. Thus, AIC provides a means for model selection."
+```{r}
+#Log Regression with variables selected
+Log_Reg <- glm(Target ~ Duration + Credit + Checkings + Sex + Savings + Housing, family = "binomial", data = Data)
+
+predictions <- predict(Log_Reg, newdata = test, type="response")
+#probability of being in class GOOD
+Class <- ifelse(predictions >= 0.5 , 1, 0)
+
+#Confusion Matrix
+table(test$Target , Class, dnn=c("Predictions", "Actual"))
+
+#accuracy function
+accuracy<- function(actual,predictions)
+{
+  y <- as.vector(table(predictions,actual))
+  names(y) <- c("TN","FP","FN","TP")
+  accuracy <- (y["TN"] + y["TP"])/ sum(y)
+  return(as.numeric(accuracy))
+}
+
+accuracy(test$Target, Class)
+```
+```{r}
+summary(Log_Reg)
+```
+We can see the significant variables with a *. 
+
+### DECISION TREE
+```{r}
+library(rpart)
+library(rpart.plot)
+tree_model <- rpart(Target ~ . , data=train)
+
+rpart.plot(tree_model)
+```
+rpart(formula, data= train, parms= , control= )
+
+control - controls how to split. control = rpart.control(minsplit=10)
+
+minsplit = 10 -> at least 10 instances must be in each node so that it could be split further
+
+minbucket = 10 -> min num of instances expected in terminal nodes
+
+cp - complexity parameter -> is used to control the size of the decision tree and to select the optimal tree size.
+
+want the tree with the min error & also min size of tree
+
+  - when cp is large -- size of tree is small and error is larger
+  - when cp is small -- size of tree is large and error is smaller 
+  
+Example:
+rpart(y~., data, parms=list(split=c("information","gini")), cp = 0.01, minsplit=20, minbucket=7, maxdepth=30)
+```{r}
+print(tree_model)
+```
+node), split, n, loss, yval, (yprob)
+
+split- variable name & condition
+
+n - number of instances on the node 
+
+loss - instances predicted in the wrong class
+
+yval - predicted class 
+
+yprob - probability of being in each class [(x,y) first num x  corresponds to the class predicted in the first node]
+
+asteriks - terminal nodes
+```{r}
+tree_pred_class <- predict(tree_model, test, type = "class")
+table(tree_pred_class, test$Target)
+accuracy(tree_pred_class, test$Target)
+```
+
+```{r}
+#To find best value of CP we can use printcp(), plotcp(), or summary() and choose CP with minimun xerror
+printcp(tree_model)
+plotcp(tree_model)
+```
+#### Tree with best CP value and minimum prediction error
+```{r}
+optimal <- which.min(tree_model$cptable[ ,"xerror"])
+cp <- tree_model$cptable[optimal, "CP"]
+tree_pruned <- prune(tree_model, cp = cp)
+rpart.plot(tree_pruned)
+```
+```{r}
+tree_pruned_pred_class <- predict(tree_pruned, test, type = "class")
+table(tree_pruned_pred_class, test$Target)
+accuracy(tree_pruned_pred_class, test$Target)
+```
+We can see accuracy increased by using best CP value
+
+### SVM Model 
+First model with our selected values of cost and gamma
+```{r}
+library(e1071)
+svmModel<- svm(Target ~ . , data=train, type="C-classification", cost=100)
+summary(svmModel)
+
+preds <- predict(svmModel, newdata=test)
+preds
+
+table(test$Target, preds)
+accuracy(test$Target, preds)
+```
+type = "C-classification" - binary classification
+
+cost - cost of misclassification: 
+
+  - if high-> not many misclassified points, margin can be small
+      
+  - if low -> make more mistakes, margin is larger
+  
+Gamma defines how far the influence of a single training example reach.(influence of points either near or far away from the hyperplane.)
+
+  - Higher value of gamma → every point has close reach data → chance of overfitting, decision boundary looks wiggly.
+  
+  - Low value of gamma → every point has far reach data → decision boundary looks smoother 
+
+to find best cost and gamma values, use cross validation
+
+###### This function uses cv to find best value of gamma
+Gamma in SVM is usually a value between 0 and 1
+```{r}
+tunesvm <- tune(svm, Target ~. , data = train, kernel="radial", ranges = list(gamma = seq(.01, 0.1, by = .01), cost = 100, tunecontrol = tune.control(nrepeat = 10, sampling = "cross", cross = 10)))
+tunesvm
+```
+
+##### SVM Model using best gamma value obtained by doing CV
+
+```{r}
+SVMmodel_tuned<- svm(Target~., data = train, type="C-classification" , cost = 100, gamma=0.01)
+predicted_svm <- predict(SVMmodel_tuned, newdata = test)
+
+accuracy(test$Target, predicted_svm)
+```
+
+```{r}
+recall <- function(actual,predictions)
+{
+  y <- as.vector(table(predictions,actual))
+  names(y) <- c("TN","FP","FN","TP")
+  recall <- (y["TP"] /  (y["TP"]+ y["FN"]))
+  return(as.numeric(recall))
+}
+
+ recall(test$Target, predicted_svm)
+ 
+ precision <- function(actual,predictions)
+{
+  y <- as.vector(table(predictions,actual))
+  names(y) <- c("TN","FP","FN","TP")
+  precision <- (y["TP"] / (y["TP"]+ y["FP"]))
+  return(as.numeric(precision))
+}
+
+ precision(test$Target, predicted_svm)
+ 
+ accuracy<- function(actual,predictions)
+{
+  y <- as.vector(table(predictions,actual))
+  names(y) <- c("TN","FP","FN","TP")
+  accuracy <- (y["TN"] + y["TP"])/ sum(y)
+  return(as.numeric(accuracy))
+}
+ accuracy(test$Target, predicted_svm)
+```
+
+### NAIVE BAYES MODEL 
+```{r}
+naive_model <- naiveBayes(Target ~ ., data= train)
+naive_pred_class <- predict(naive_model, test, type="class", laplace =1)
+naive_pred_class
+naive_pred_prob <- predict(naive_model, test, type="raw")
+
+#confusion matrix
+table(naive_pred_class, test$Target, dnn= c("Prediction", "Actual"))
+accuracy(naive_pred_class, test$Target)
+```
+#### Evaluation of Models using ROC Curves 
+```{r}
+library(ROCR)
+# 2 main functions: prediction & performance
+# prediction(True Labels, Predicted Probabilities for positive class)
+```
+##### ROC Curve for SVM model
+```{r}
+svmModel1<- svm(Target ~ . , data=train, probability = TRUE, type="C-classification", gamma=0.01, cost=100, decision.values = TRUE)
+pred_svm <- predict(svmModel1, newdata=test, probability = TRUE, decision.values = TRUE)
+# returns predicted class, and probabilities of belonging on each class
+pred_prob_svm <- attr(pred_svm, "probabilities")
+# store results of the probabilities of being in each class
+pred_prob_svm_good <- pred_prob_svm[,2] 
+# store prob of ONLY being in class 1 - Good
+pred <- prediction(pred_prob_svm_good, test$Target)
+
+#ROC CURVE CHART
+perf_roc_svm <- performance(pred, "tpr", "fpr")
+plot(perf_roc_svm)
+
+#AUC 
+auc_svm <- performance(pred, "auc")
+auc_svm <- unlist(slot(auc_svm, "y.values"))
+auc_svm
+```
+##### ROC Curve for Logistic Regression Model
+```{r}
+pred_lr <- prediction(predictions, test$Target)
+perf_roc_lr <- performance(pred_lr, "tpr", "fpr")
+plot(perf_roc_lr)
+
+#AUC 
+auc_LR <- performance(pred_lr, "auc")
+auc_LR <- unlist(slot(auc_LR, "y.values"))
+auc_LR
+```
+##### ROC Curve for Decision Tree Model
+```{r}
+tree_pruned_pred_probs <- predict(tree_pruned, test) 
+#probability of being in each class
+tree_pruned_pred_probs_positive <- tree_pruned_pred_probs[,2] 
+#probability of being in class 1-Good
+
+pred_decision_tree <- prediction(tree_pruned_pred_probs_positive, test$Target)
+perf_roc_decision_tree <- performance(pred_decision_tree, "tpr", "fpr")
+plot(perf_roc_decision_tree)
+
+#AUC
+auc_DT <- performance(pred_decision_tree, "auc" )
+auc_DT <- unlist(slot(auc_DT, "y.values"))
+auc_DT
+```
+
+##### ROC Curve for Naive Bayes Model
+```{r}
+naive_pred_prob_yes <- naive_pred_prob[,2]
+pred_nb <- prediction(naive_pred_prob_yes, test$Target)
+perf_roc_nb <- performance(pred_nb, "tpr", "fpr")
+plot(perf_roc_nb)
+
+#AUC 
+auc_NB <- performance(pred_nb, "auc")
+auc_NB <- unlist(slot(auc_NB, "y.values"))
+auc_NB
+```
+
+Overall, our Logistic Regression Model is performing better than SVM, DT, and Naive Bayes.
+
+The accuracy of the Logistic Regression Model: 0.6838235, AUC: 0.7447807
+
+The accuracy of the SVM: 0.6691176 , AUC: 0.7037298
+
+The accuracy of the DT: 0.5955882 , AUC:0.575651
+
+The accuracy of the NB: 0.6544118 , AUC:0.6572836
